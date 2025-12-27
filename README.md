@@ -214,6 +214,9 @@ MIT License - Feel free to use and modify as needed.
 
 - **OpenCV**: Computer vision library
 
+# Eatventure Bot 🎮🤖
+Intelligent automation bot for Eatventure mobile game
+
 **Keywords:** Eatventure, Eatventure bot, game automation Python, OpenCV game bot, mobile game automation, Android game bot, scrcpy automation, computer vision gaming, Python game bot, automated gameplay, image recognition bot, restaurant game bot, idle game automation
 - **scrcpy**: Android screen mirroring tool
 - **pywin32**: Windows API access
