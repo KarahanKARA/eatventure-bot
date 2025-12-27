@@ -1,0 +1,5 @@
+opencv-python==4.8.1.78
+numpy==1.24.3
+pillow==10.1.0
+pywin32==306
+pynput==1.7.6

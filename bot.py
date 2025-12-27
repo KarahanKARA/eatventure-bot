@@ -1,0 +1,647 @@
+import time
+import logging
+from pathlib import Path
+
+from window_capture import WindowCapture
+from image_matcher import ImageMatcher
+from mouse_controller import MouseController
+from state_machine import StateMachine, State
+import config
+
+logger = logging.getLogger(__name__)
+
+
+class EatventureBot:
+    def __init__(self):
+        logger.info("Initializing Eatventure Bot...")
+        
+        self.window_capture = WindowCapture(config.WINDOW_TITLE, config.WINDOW_WIDTH, config.WINDOW_HEIGHT)
+        self.image_matcher = ImageMatcher(config.MATCH_THRESHOLD)
+        self.mouse_controller = MouseController(
+            self.window_capture.hwnd,
+            config.CLICK_DELAY
+        )
+        self.state_machine = StateMachine(State.FIND_RED_ICONS)
+        
+        self.register_states()
+        self.templates = self.load_templates()
+        self.running = False
+        self.red_icon_cycle_count = 0
+        self.red_icons = []
+        self.current_red_icon_index = 0
+        self.wait_for_unlock_attempts = 0
+        self.max_wait_for_unlock_attempts = 4
+        
+        self.scroll_direction = 'down'
+        self.scroll_count = 0
+        self.max_scroll_count = 5
+        self.work_done = False
+        self.cycle_counter = 0
+        self.upgrade_station_counter = 0
+        self.red_icon_processed_count = 0
+        
+        self.successful_red_icon_positions = []
+        self.upgrade_found_in_cycle = False
+        self.consecutive_failed_cycles = 0
+        
+        logger.info("Bot initialized successfully")
+    
+    def load_templates(self):
+        templates = {}
+        templates_path = Path(config.ASSETS_DIR)
+        
+        if not templates_path.exists():
+            logger.error(f"Assets directory not found: {templates_path}")
+            return templates
+        
+        for template_file in templates_path.glob("*.png"):
+            try:
+                template_name = template_file.stem
+                template_img = self.image_matcher.load_template(template_file)
+                templates[template_name] = template_img
+                logger.info(f"Loaded template: {template_name}")
+            except Exception as e:
+                logger.error(f"Failed to load template {template_file}: {e}")
+        
+        return templates
+    
+    def register_states(self):
+        self.state_machine.register_handler(State.FIND_RED_ICONS, self.handle_find_red_icons)
+        self.state_machine.register_handler(State.CLICK_RED_ICON, self.handle_click_red_icon)
+        self.state_machine.register_handler(State.CHECK_UNLOCK, self.handle_check_unlock)
+        self.state_machine.register_handler(State.SEARCH_UPGRADE_STATION, self.handle_search_upgrade_station)
+        self.state_machine.register_handler(State.HOLD_UPGRADE_STATION, self.handle_hold_upgrade_station)
+        self.state_machine.register_handler(State.OPEN_BOXES, self.handle_open_boxes)
+        self.state_machine.register_handler(State.UPGRADE_STATS, self.handle_upgrade_stats)
+        self.state_machine.register_handler(State.SCROLL, self.handle_scroll)
+        self.state_machine.register_handler(State.CHECK_NEW_LEVEL, self.handle_check_new_level)
+        self.state_machine.register_handler(State.TRANSITION_LEVEL, self.handle_transition_level)
+        self.state_machine.register_handler(State.WAIT_FOR_UNLOCK, self.handle_wait_for_unlock)
+    
+    def handle_find_red_icons(self, current_state):
+        self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
+        time.sleep(0.05)
+        
+        self.cycle_counter += 1
+        logger.info(f"🔄 Cycle {self.cycle_counter}/2")
+        
+        if self.cycle_counter >= 2:
+            logger.info("➡ 2 cycles done → Force scroll")
+            self.cycle_counter = 0
+            return State.SCROLL
+        
+        self.work_done = False
+        
+        screenshot = self.window_capture.capture()
+        limited_screenshot = screenshot[:config.MAX_SEARCH_Y, :]
+        
+        if "newLevel" in self.templates:
+            template, mask = self.templates["newLevel"]
+            found, confidence, x, y = self.image_matcher.find_template(
+                limited_screenshot, template, mask=mask,
+                threshold=config.NEW_LEVEL_THRESHOLD
+            )
+            
+            if found:
+                logger.info(f"newLevel.png found at ({x}, {y}), transitioning to new level")
+                return State.TRANSITION_LEVEL
+        
+        red_icon_templates = ["RedIcon", "RedIcon2","RedIcon3","RedIcon4","RedIcon5","RedIcon6","RedIcon7", "RedIconNoBG"]
+        
+        all_detections = {}
+        all_detections_extended = {}
+        
+        for template_name in red_icon_templates:
+            if template_name not in self.templates:
+                continue
+            
+            template, mask = self.templates[template_name]
+            
+            icons = self.image_matcher.find_all_templates(
+                limited_screenshot, template, mask=mask,
+                threshold=config.RED_ICON_THRESHOLD,
+                min_distance=80, template_name=template_name
+            )
+            
+            for conf, x, y in icons:
+                found_nearby = False
+                for (px, py) in list(all_detections.keys()):
+                    if abs(x - px) < 10 and abs(y - py) < 10:
+                        all_detections[(px, py)].append((template_name, conf))
+                        found_nearby = True
+                        break
+                
+                if not found_nearby:
+                    all_detections[(x, y)] = [(template_name, conf)]
+            
+            extended_screenshot = screenshot[:710, :]
+            icons_extended = self.image_matcher.find_all_templates(
+                extended_screenshot, template, mask=mask,
+                threshold=config.RED_ICON_THRESHOLD,
+                min_distance=80, template_name=template_name
+            )
+            
+            for conf, x, y in icons_extended:
+                found_nearby = False
+                for (px, py) in list(all_detections_extended.keys()):
+                    if abs(x - px) < 10 and abs(y - py) < 10:
+                        all_detections_extended[(px, py)].append((template_name, conf))
+                        found_nearby = True
+                        break
+                
+                if not found_nearby:
+                    all_detections_extended[(x, y)] = [(template_name, conf)]
+        
+        min_matches = config.RED_ICON_MIN_MATCHES
+        total_detections = len(all_detections)
+        rejected_count = 0
+        
+        self.red_icons = []
+        for (x, y), matches in all_detections.items():
+            if len(matches) >= min_matches:
+                max_conf = max(conf for _, conf in matches)
+                self.red_icons.append((max_conf, x, y))
+            else:
+                rejected_count += 1
+        
+        all_red_icons_extended = []
+        for (x, y), matches in all_detections_extended.items():
+            if len(matches) >= min_matches:
+                max_conf = max(conf for _, conf in matches)
+                all_red_icons_extended.append((max_conf, x, y))
+        
+        logger.info(f"Red Icon Detection: {total_detections} total → {len(self.red_icons)} valid (min {min_matches} template matches), {rejected_count} rejected")
+        
+        for conf, x, y in all_red_icons_extended:
+            if (config.NEW_LEVEL_RED_ICON_X_MIN <= x <= config.NEW_LEVEL_RED_ICON_X_MAX and 
+                config.NEW_LEVEL_RED_ICON_Y_MIN <= y <= config.NEW_LEVEL_RED_ICON_Y_MAX):
+                logger.info(f"New level detected! Red icon at ({x}, {y})")
+                return State.CHECK_NEW_LEVEL
+        
+        if self.red_icons:
+            filtered_icons = []
+            forbidden_zone_count = 0
+            
+            for conf, x, y in self.red_icons:
+                in_forbidden = False
+                
+                if (config.FORBIDDEN_ZONE_1_X_MIN <= x <= config.FORBIDDEN_ZONE_1_X_MAX and 
+                    config.FORBIDDEN_ZONE_1_Y_MIN <= y <= config.FORBIDDEN_ZONE_1_Y_MAX):
+                    in_forbidden = True
+                    
+                elif (config.FORBIDDEN_ZONE_2_X_MIN <= x <= config.FORBIDDEN_ZONE_2_X_MAX and 
+                    config.FORBIDDEN_ZONE_2_Y_MIN <= y <= config.FORBIDDEN_ZONE_2_Y_MAX):
+                    in_forbidden = True
+                    
+                elif (config.FORBIDDEN_ZONE_3_X_MIN <= x <= config.FORBIDDEN_ZONE_3_X_MAX and 
+                    config.FORBIDDEN_ZONE_3_Y_MIN <= y <= config.FORBIDDEN_ZONE_3_Y_MAX):
+                    in_forbidden = True
+                
+                if in_forbidden:
+                    forbidden_zone_count += 1
+                else:
+                    filtered_icons.append((conf, x, y))
+            
+            if forbidden_zone_count > 0:
+                logger.info(f"Forbidden Zone Filter: {forbidden_zone_count} icons removed")
+            
+            if not filtered_icons:
+                logger.info("No valid red icons after filtering")
+                return State.OPEN_BOXES
+            
+            def get_priority(icon):
+                conf, x, y = icon
+                for success_y in self.successful_red_icon_positions:
+                    if abs(y - success_y) < 50:
+                        return (0, y)
+                return (1, y)
+            
+            filtered_icons.sort(key=get_priority)
+            self.red_icons = filtered_icons
+            
+            logger.info(f"✓ {len(self.red_icons)} red icons ready to process")
+            self.current_red_icon_index = 0
+            self.red_icon_cycle_count = 0
+            self.work_done = True
+            return State.CLICK_RED_ICON
+        
+        return State.OPEN_BOXES
+    
+    def handle_click_red_icon(self, current_state):
+        if self.current_red_icon_index >= len(self.red_icons):
+            logger.info("All red icons processed, continuing cycle")
+            return State.OPEN_BOXES
+        
+        confidence, x, y = self.red_icons[self.current_red_icon_index]
+        click_x = x + config.RED_ICON_OFFSET_X
+        click_y = y + config.RED_ICON_OFFSET_Y
+        logger.info(f"Clicking red icon {self.current_red_icon_index + 1}/{len(self.red_icons)} at ({click_x}, {click_y})")
+        self.mouse_controller.click(click_x, click_y, relative=True)
+        time.sleep(0.1)
+        
+        self.red_icon_cycle_count = 0
+        return State.CHECK_UNLOCK
+    
+    def handle_check_unlock(self, current_state):
+        screenshot = self.window_capture.capture()
+        limited_screenshot = screenshot[:config.MAX_SEARCH_Y, :]
+        
+        if "unlock" in self.templates:
+            template, mask = self.templates["unlock"]
+            found, confidence, x, y = self.image_matcher.find_template(
+                limited_screenshot, template, mask=mask,
+                threshold=config.UNLOCK_THRESHOLD, template_name="unlock"
+            )
+            
+            if found:
+                if (y > config.FORBIDDEN_CLICK_Y_MIN and 
+                    config.FORBIDDEN_CLICK_X_MIN < x < config.FORBIDDEN_CLICK_X_MAX):
+                    logger.warning(f"Unlock button in forbidden zone, skipping")
+                else:
+                    logger.info(f"Unlock found, clicking")
+                    self.mouse_controller.click(x, y, relative=True)
+                    time.sleep(config.STATE_DELAY)
+        
+        return State.SEARCH_UPGRADE_STATION
+    
+    def handle_search_upgrade_station(self, current_state):
+        max_attempts = 5
+        relaxed_threshold = config.UPGRADE_STATION_THRESHOLD - 0.05
+        
+        for attempt in range(max_attempts):
+            screenshot = self.window_capture.capture()
+            limited_screenshot = screenshot[:config.MAX_SEARCH_Y, :]
+            
+            if "upgradeStation" in self.templates:
+                template, mask = self.templates["upgradeStation"]
+                
+                current_threshold = config.UPGRADE_STATION_THRESHOLD if attempt < 2 else relaxed_threshold
+                
+                found, confidence, x, y = self.image_matcher.find_template(
+                    limited_screenshot, template, mask=mask,
+                    threshold=current_threshold, template_name="upgradeStation"
+                )
+                
+                if found:
+                    logger.info(f"✓ Upgrade station found (attempt {attempt + 1})")
+                    self.upgrade_station_pos = (x, y)
+                    
+                    if self.current_red_icon_index < len(self.red_icons):
+                        _, _, red_y = self.red_icons[self.current_red_icon_index]
+                        if red_y not in self.successful_red_icon_positions:
+                            self.successful_red_icon_positions.append(red_y)
+                    
+                    self.upgrade_found_in_cycle = True
+                    self.consecutive_failed_cycles = 0
+                    return State.HOLD_UPGRADE_STATION
+            
+            if attempt < max_attempts - 1:
+                time.sleep(0.15)
+        
+        logger.info(f"✗ Upgrade station not found (failed cycles: {self.consecutive_failed_cycles + 1})")
+        self.red_icon_processed_count += 1
+        self.consecutive_failed_cycles += 1
+        return State.OPEN_BOXES
+    
+    def handle_hold_upgrade_station(self, current_state):
+        import win32api
+        import win32con
+        
+        x, y = self.upgrade_station_pos
+        win_x, win_y = self.mouse_controller.get_window_position()
+        screen_x = win_x + x
+        screen_y = win_y + y
+        
+        win32api.SetCursorPos((int(screen_x), int(screen_y)))
+        time.sleep(0.05)
+        
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, screen_x, screen_y, 0, 0)
+        logger.info(f"Holding upgrade station...")
+        
+        max_hold_time = 10.0
+        check_interval = 0.2
+        elapsed_time = 0.0
+        
+        while elapsed_time < max_hold_time:
+            time.sleep(check_interval)
+            elapsed_time += check_interval
+            
+            screenshot = self.window_capture.capture()
+            limited_screenshot = screenshot[:config.MAX_SEARCH_Y, :]
+            
+            if "upgradeStation" in self.templates:
+                template, mask = self.templates["upgradeStation"]
+                found, confidence, found_x, found_y = self.image_matcher.find_template(
+                    limited_screenshot, template, mask=mask,
+                    threshold=config.UPGRADE_STATION_THRESHOLD, template_name="upgradeStation",
+                    check_color=config.UPGRADE_STATION_COLOR_CHECK
+                )
+                
+                if not found:
+                    logger.info(f"Upgrade done ({elapsed_time:.1f}s)")
+                    break
+        
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, screen_x, screen_y, 0, 0)
+        
+        self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
+        time.sleep(0.05)
+        
+        self.red_icon_processed_count += 1
+        
+        self.upgrade_station_counter += 1
+        logger.info(f"Upgrades: {self.upgrade_station_counter}/2")
+        
+        if self.upgrade_station_counter >= 2:
+            logger.info("✓ 2 upgrades done → Stats upgrade")
+            self.upgrade_station_counter = 0
+            return State.UPGRADE_STATS
+        
+        return State.OPEN_BOXES
+    
+    def handle_upgrade_stats(self, current_state):
+        logger.info("⬆ Stats upgrade starting")
+        self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
+        time.sleep(0.05)
+        
+        screenshot = self.window_capture.capture()
+        limited_screenshot = screenshot[:config.MAX_SEARCH_Y, :]
+        
+        if "newLevel" in self.templates:
+            template, mask = self.templates["newLevel"]
+            found, confidence, x, y = self.image_matcher.find_template(
+                limited_screenshot, template, mask=mask,
+                threshold=config.NEW_LEVEL_THRESHOLD
+            )
+            
+            if found:
+                logger.info(f"New level detected during stats upgrade")
+                return State.TRANSITION_LEVEL
+        
+        extended_screenshot = screenshot[:710, :]
+        
+        has_upgrade_icon = False
+        red_icon_templates = ["RedIcon", "RedIcon2","RedIcon3","RedIcon4","RedIcon5","RedIcon6","RedIcon7","RedIcon8", "RedIconNoBG"]
+        
+        for template_name in red_icon_templates:
+            if template_name not in self.templates:
+                continue
+            
+            template, mask = self.templates[template_name]
+            icons = self.image_matcher.find_all_templates(
+                extended_screenshot, template, mask=mask,
+                threshold=config.STATS_RED_ICON_THRESHOLD,
+                min_distance=80, template_name=template_name
+            )
+            
+            for conf, x, y in icons:
+                if (config.UPGRADE_RED_ICON_X_MIN <= x <= config.UPGRADE_RED_ICON_X_MAX and 
+                    config.UPGRADE_RED_ICON_Y_MIN <= y <= config.UPGRADE_RED_ICON_Y_MAX):
+                    has_upgrade_icon = True
+                    break
+            
+            if has_upgrade_icon:
+                break
+        
+        if not has_upgrade_icon:
+            logger.info("✗ No stats icon, skipping")
+            return State.SCROLL
+        
+        logger.info("✓ Stats icon found, upgrading")
+        self.mouse_controller.click(config.STATS_UPGRADE_BUTTON_POS[0], config.STATS_UPGRADE_BUTTON_POS[1], relative=True)
+        time.sleep(config.STATE_DELAY)
+        
+        for i in range(config.STATS_UPGRADE_CLICK_COUNT):
+            self.mouse_controller.click(config.STATS_UPGRADE_POS[0], config.STATS_UPGRADE_POS[1], relative=True)
+            time.sleep(config.STATS_UPGRADE_CLICK_DELAY)
+        
+        self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
+        time.sleep(config.STATE_DELAY)
+        
+        logger.info("========== STAT UPGRADE COMPLETED ==========")
+        return State.OPEN_BOXES
+    
+    def handle_open_boxes(self, current_state):
+        self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
+        time.sleep(0.05)
+        
+        screenshot = self.window_capture.capture()
+        limited_screenshot = screenshot[:config.MAX_SEARCH_Y, :]
+        
+        if "newLevel" in self.templates:
+            template, mask = self.templates["newLevel"]
+            found, confidence, x, y = self.image_matcher.find_template(
+                limited_screenshot, template, mask=mask,
+                threshold=config.NEW_LEVEL_THRESHOLD
+            )
+            
+            if found:
+                logger.info(f"[OPEN_BOXES] newLevel.png found at ({x}, {y}), transitioning to new level")
+                return State.TRANSITION_LEVEL
+        
+        box_names = ["box1", "box2", "box3", "box4", "box5"]
+        boxes_found = 0
+        
+        for box_name in box_names:
+            if box_name in self.templates:
+                template, mask = self.templates[box_name]
+                found, confidence, x, y = self.image_matcher.find_template(
+                    limited_screenshot, template, mask=mask,
+                    threshold=config.BOX_THRESHOLD, template_name=box_name
+                )
+                
+                if found:
+                    if (y > config.FORBIDDEN_CLICK_Y_MIN and 
+                        config.FORBIDDEN_CLICK_X_MIN < x < config.FORBIDDEN_CLICK_X_MAX):
+                        logger.debug(f"{box_name} in forbidden zone, skipping")
+                    else:
+                        self.mouse_controller.click(x, y, relative=True)
+                        time.sleep(0.05)
+                        boxes_found += 1
+        
+        if boxes_found > 0:
+            logger.info(f"🎁 Opened {boxes_found} boxes")
+            self.work_done = True
+        
+        if self.upgrade_found_in_cycle:
+            logger.info("✓ Upgrade found → Staying in area")
+            self.upgrade_found_in_cycle = False
+            self.cycle_counter = 0
+            return State.FIND_RED_ICONS
+        
+        self.cycle_counter += 1
+        
+        if self.consecutive_failed_cycles >= 3:
+            logger.info(f"⚠ {self.consecutive_failed_cycles} failed → Force scroll")
+            self.consecutive_failed_cycles = 0
+            self.cycle_counter = 0
+            return State.SCROLL
+        
+        if self.cycle_counter >= 2:
+            logger.info(f"➡ Cycle {self.cycle_counter}/2 done → Scrolling")
+            self.cycle_counter = 0
+            return State.SCROLL
+        else:
+            return State.FIND_RED_ICONS
+    
+    def handle_scroll(self, current_state):
+        self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
+        time.sleep(0.05)
+        
+        screenshot = self.window_capture.capture()
+        limited_screenshot = screenshot[:config.MAX_SEARCH_Y, :]
+        
+        if "newLevel" in self.templates:
+            template, mask = self.templates["newLevel"]
+            found, confidence, x, y = self.image_matcher.find_template(
+                limited_screenshot, template, mask=mask,
+                threshold=config.NEW_LEVEL_THRESHOLD
+            )
+            
+            if found:
+                logger.info(f"New level detected before scroll")
+                return State.TRANSITION_LEVEL
+        
+        if self.scroll_direction == 'up':
+            logger.info(f"⬆ Scroll UP ({self.scroll_count + 1}/{self.max_scroll_count})")
+            self.mouse_controller.drag(
+                config.SCROLL_END_POS[0], config.SCROLL_END_POS[1],
+                config.SCROLL_START_POS[0], config.SCROLL_START_POS[1],
+                duration=0.3, relative=True
+            )
+        else:  # down
+            logger.info(f"⬇ Scroll DOWN ({self.scroll_count + 1}/{self.max_scroll_count})")
+            self.mouse_controller.drag(
+                config.SCROLL_START_POS[0], config.SCROLL_START_POS[1],
+                config.SCROLL_END_POS[0], config.SCROLL_END_POS[1],
+                duration=0.3, relative=True
+            )
+        
+        time.sleep(config.STATE_DELAY)
+        self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
+        time.sleep(0.05)
+        
+        self.scroll_count += 1
+        
+        if self.scroll_count >= self.max_scroll_count:
+            if self.scroll_direction == 'up':
+                self.scroll_direction = 'down'
+            else:
+                self.scroll_direction = 'up'
+            self.scroll_count = 0
+        
+        return State.FIND_RED_ICONS
+    
+    def handle_check_new_level(self, current_state):
+        self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
+        time.sleep(0.05)
+        
+        logger.info("Clicking new level button position")
+        self.mouse_controller.click(config.NEW_LEVEL_BUTTON_POS[0], config.NEW_LEVEL_BUTTON_POS[1], relative=True)
+        time.sleep(0.3)
+        
+        screenshot = self.window_capture.capture()
+        limited_screenshot = screenshot[:config.MAX_SEARCH_Y, :]
+        
+        if "upgradeStation" in self.templates:
+            template, mask = self.templates["upgradeStation"]
+            found, confidence, x, y = self.image_matcher.find_template(
+                limited_screenshot, template, mask=mask,
+                threshold=config.UPGRADE_STATION_THRESHOLD, template_name="upgradeStation",
+                check_color=config.UPGRADE_STATION_COLOR_CHECK
+            )
+            
+            if found:
+                logger.info(f"Upgrade station found at ({x}, {y}) for level transition")
+                self.mouse_controller.click(x, y, relative=True)
+                time.sleep(2.5)
+                return State.TRANSITION_LEVEL
+        
+        logger.warning("Upgrade station not found for level transition")
+        self.scroll_direction = 'down'
+        self.scroll_count = 0
+        return State.FIND_RED_ICONS
+    
+    def handle_transition_level(self, current_state):
+        self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
+        time.sleep(0.05)
+        
+        screenshot = self.window_capture.capture()
+        limited_screenshot = screenshot[:config.MAX_SEARCH_Y, :]
+        
+        if "newLevel" in self.templates:
+            template, mask = self.templates["newLevel"]
+            found, confidence, x, y = self.image_matcher.find_template(
+                limited_screenshot, template, mask=mask,
+                threshold=config.NEW_LEVEL_THRESHOLD, template_name="newLevel"
+            )
+            
+            if found:
+                logger.info(f"New level button found at ({x}, {y})")
+                self.mouse_controller.click(x, y, relative=True)
+                time.sleep(1.0)
+                logger.info("Waiting for unlock button after level transition")
+                return State.WAIT_FOR_UNLOCK
+        
+        logger.warning("New level button not found")
+        self.scroll_direction = 'down'
+        self.scroll_count = 0
+        return State.FIND_RED_ICONS
+    
+    def handle_wait_for_unlock(self, current_state):
+        self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
+        time.sleep(0.05)
+        
+        self.wait_for_unlock_attempts += 1
+        logger.debug(f"Waiting for unlock button (attempt {self.wait_for_unlock_attempts}/{self.max_wait_for_unlock_attempts})")
+        
+        if self.wait_for_unlock_attempts > self.max_wait_for_unlock_attempts:
+            logger.warning(f"Unlock button not found after {self.max_wait_for_unlock_attempts} attempts, resetting to scroll")
+            self.wait_for_unlock_attempts = 0
+            self.scroll_direction = 'down'
+            self.scroll_count = 0
+            return State.FIND_RED_ICONS
+        
+        screenshot = self.window_capture.capture()
+        
+        if "unlock" in self.templates:
+            template, mask = self.templates["unlock"]
+            found, confidence, x, y = self.image_matcher.find_template(
+                screenshot, template, mask=mask,
+                threshold=config.UNLOCK_THRESHOLD, template_name="unlock"
+            )
+            
+            if found:
+                logger.info(f"Unlock button found at ({x}, {y}) after level transition")
+                self.mouse_controller.click(x, y, relative=True)
+                time.sleep(0.5)
+                logger.info("Starting new level")
+                self.wait_for_unlock_attempts = 0
+                self.scroll_direction = 'down'
+                self.scroll_count = 0
+                return State.FIND_RED_ICONS
+        
+        time.sleep(0.3)
+        return State.WAIT_FOR_UNLOCK
+    
+    def run(self):
+        self.running = True
+        logger.info("Bot started - Press Ctrl+C to stop")
+        
+        try:
+            while self.running:
+                if not self.window_capture.is_window_active():
+                    logger.error(f"Window '{config.WINDOW_TITLE}' is no longer active!")
+                    break
+                
+                self.state_machine.update()
+                
+        except KeyboardInterrupt:
+            logger.info("Bot stopped by user (Ctrl+C)")
+        except Exception as e:
+            logger.error(f"Bot error: {e}", exc_info=True)
+        finally:
+            self.stop()
+    
+    def stop(self):
+        self.running = False
+        logger.info("Bot stopped")
