@@ -4,7 +4,7 @@ An intelligent automation bot for the Eatventure mobile game using advanced comp
 
 ## 🎬 Demo
 
-https://github.com/user-attachments/assets/60b48718-d6a3-4a1d-bd5b-8919f21b1200
+https://github.com/user-attachments/assets/4560ed96-00ef-4f9d-842f-6cd6317f2a22
 
 > **Note:** Upload your video to a GitHub issue/PR comment, then paste the auto-generated link here for best compatibility.
 
