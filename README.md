@@ -1,6 +1,6 @@
 # Eatventure Bot 🎮🤖
 
-An intelligent automation bot for the Eatventure mobile game using advanced computer vision and state machine architecture. The bot automatically detects on-screen elements, clicks buttons, manages upgrades, and progresses through game levels.
+An intelligent automation bot for the Eatventure mobile game using advanced computer vision and state machine architecture. The bot automatically detects on-screen elements, clicks buttons, manages upgrades, and progresses through game levels with Telegram notifications.
 
 ## 🎬 Demo
 
@@ -17,9 +17,11 @@ https://github.com/user-attachments/assets/4560ed96-00ef-4f9d-842f-6cd6317f2a22
 - 🔄 **State Machine Architecture**: Robust state management for complex game automation
 - 📸 **Window Capture**: Direct window capture using Win32 API for optimal performance
 - 🎨 **Multi-Template Matching**: Detects red icons using multiple template variations for accuracy
-- 🛡️ **Safe Zone Detection**: Prevents accidental clicks in UI areas (menus, buttons)
+- 🛡️ **Safe Zone Detection**: Prevents accidental clicks in UI areas (menus, buttons) with configurable forbidden zones
 - 📊 **Comprehensive Logging**: Detailed logs for debugging and monitoring
-- ⚙️ **Highly Configurable**: Easy configuration through `config.py`
+- 📱 **Telegram Integration**: Real-time notifications about bot activity and level completions
+- 🎨 **Visual Debugging**: Optional overlay to visualize forbidden zones
+- ⚙️ **Highly Configurable**: Easy configuration through `config.py` with extensive comments
 
 ## 🎮 How It Works
 
@@ -31,7 +33,7 @@ The bot operates through several intelligent states:
 4. **Open Boxes**: Collects reward boxes automatically
 5. **Stats Upgrade**: Manages character statistics upgrades
 6. **Smart Scrolling**: Navigates through the game map intelligently
-7. **Level Transitions**: Detects and progresses to new levels
+7. **Level Transitions**: Detects and progresses to new levels with Telegram notifications
 
 ## 📋 Requirements
 
@@ -59,16 +61,52 @@ pip install -r requirements.txt
 
 ### Step 3: Configure the Bot
 
-Open `config.py` and update the window title to match your scrcpy window:
+Open `config.py` and configure the following settings:
 
+#### Window Configuration
 ```python
-WINDOW_TITLE = "YourDeviceName"  # Replace with your device name from scrcpy
+# The exact title of your scrcpy window
+# To find it: Look at the window's title bar after running scrcpy
+WINDOW_TITLE = "SM-M315F"  # Replace with your device name
 ```
 
-**To find your device name:**
-1. Run scrcpy normally
-2. Look at the window title (usually shows your device model, e.g., "SM-M315F")
+**How to find your WINDOW_TITLE:**
+1. Run scrcpy normally: `scrcpy --window-title "YourDeviceName"`
+2. Look at the window's title bar (usually shows device model like "SM-M315F", "Pixel 6", etc.)
 3. Copy that exact name to `config.py`
+4. Alternative: While bot is running, press **X** to test if the window is detected
+
+#### Telegram Notifications (Optional but Recommended)
+
+The bot can send you real-time notifications via Telegram:
+- 🤖 Bot start/stop events
+- 🎉 Level completions with time tracking
+- 📊 Progress updates
+
+**Setup Steps:**
+
+1. **Create a Telegram Bot:**
+   - Open Telegram and search for `@BotFather`
+   - Send `/newbot` command
+   - Follow instructions to create your bot
+   - Copy the **bot token** (looks like: `1234567890:ABCdefGHIjklMNOpqrsTUVwxyz`)
+
+2. **Get Your Chat ID:**
+   - Send any message to your bot
+   - Visit: `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`
+   - Look for `"chat":{"id": YOUR_CHAT_ID` (a number like `1352878588`)
+
+3. **Configure in config.py:**
+   ```python
+   TELEGRAM_ENABLED = True  # Set to False to disable notifications
+   TELEGRAM_BOT_TOKEN = "your-bot-token-here"
+   TELEGRAM_CHAT_ID = "your-chat-id-here"
+   ```
+
+**Telegram Messages You'll Receive:**
+- `🤖 Bot Started` - When you press Z to start
+- `⏹️ Bot Stopped` - When you press Z to stop
+- `5. restaurant completed! Time spent: 03:45` - After each level completion
 
 ### Step 4: Add Template Images
 
@@ -76,34 +114,86 @@ Place your template images in the `Assets/` folder. The bot needs these template
 
 ```
 Assets/
-├── RedIcon.png          # Red notification icons
-├── RedIcon2.png         # Variations of red icons
-├── box1.png             # Reward box templates
-├── upgradeStation.png   # Upgrade button
-├── unlock.png           # Unlock popup
-└── newLevel.png         # New level button
+# The exact title of your scrcpy window (see in window title bar)
+WINDOW_TITLE = "SM-M315F"
+WINDOW_WIDTH = 360
+WINDOW_HEIGHT = 780
 ```
 
-## 🎯 Usage
+### Telegram Notifications
+```python
+# Master switch for all Telegram notifications
+TELEGRAM_ENABLED = True  # Set to False to disable
 
-### Running the Bot
-
-```bash
-python main.py
+# Your bot credentials (get from @BotFather)
+TELEGRAM_BOT_TOKEN = "your-token-here"
+TELEGRAM_CHAT_ID = "your-chat-id-here"
 ```
 
-### Keyboard Controls
+### Detection Thresholds
+```python
+MATCH_THRESHOLD = 0.98           # General matching confidence (0.0-1.0)
+RED_ICON_THRESHOLD = 0.95        # Red icon detection threshold
+RED_ICON_MIN_MATCHES = 3         # Minimum template matches required
+```
 
-- **Z**: Start/Stop the bot
-- **X**: Show current cursor position (for configuration)
-- **P**: Exit the program
+### Visual Debugging
+```python
+# Shows red overlay rectangles on forbidden zones
+ShowForbiddenArea = False  # Set to True to visualize forbidden zones
+```
 
-### First Time Setup
+When `ShowForbiddenArea = True`, the bot displays a semi-transparent overlay showing all forbidden zones in red. This is useful for:
+- Debugging click position issues
+- Visualizing protected UI areas
+- Adjusting forbidden zone coordinates
 
-1. Start scrcpy with your device
-2. Launch the Eatventure game
-3. Run the bot with `python main.py`
-4. Press **Z** to start automation
+### Click Positions
+```python
+IDLE_CLICK_POS = (2, 390)        # Safe idle click position
+STATS_UPGRADE_POS = (270, 304)   # Stats upgrade button
+SCROLL_START_POS = (170, 380)    # Scroll start position
+SCROLL_END_POS = (170, 200)      # Scroll end position
+```
+
+### Forbidden Zones
+
+Forbidden zones prevent the bot from clicking on critical UI elements. Each zone is defined by X and Y coordinate boundaries:
+
+```python
+# Zone 1: Right side menu area
+FORBIDDEN_ZONE_1_X_MIN = 290
+FORBIDDEN_ZONE_1_X_MAX = 350
+FORBIDDEN_ZONE_1_Y_MIN = 93
+FORBIDDEN_ZONE_1_Y_MAX = 270
+
+# Zone 2: Left side top menu area
+FORBIDDEN_ZONE_2_X_MIN = 0
+FORBIDDEN_ZONE_2_X_MAX = 60
+FORBIDDEN_ZONE_2_Y_MIN = 50
+FORBIDDEN_ZONE_2_Y_MAX = 280
+
+# ... and more zones
+```
+
+**How Forbidden Zones Work:**
+- Bot checks every click position before executing
+- If position is inside any forbidden zone, click is blocked
+- Prevents accidental UI interactions (settings, shop, ads, etc.)
+
+**Adding New Forbidden Zones:**
+1. Set `ShowForbiddenArea = True` to visualize current zones
+2. Press **X** while hovering over the area you want to protect
+3. Note the coordinates shown in the log
+4. Add a new zone in `config.py`:
+   ```python
+   FORBIDDEN_ZONE_6_X_MIN = your_x_min
+   FORBIDDEN_ZONE_6_X_MAX = your_x_max
+   FORBIDDEN_ZONE_6_Y_MIN = your_y_min
+   FORBIDDEN_ZONE_6_Y_MAX = your_y_max
+   ```
+5. Update `mouse_controller.py` to include the new zone check
+6. Update `bot.py` to include the zone in the overlay (if using `ShowForbiddenArea`)Press **Z** to start automation
 5. Monitor the console and `logs/bot.log` for activity
 
 ## ⚙️ Configuration
@@ -148,15 +238,28 @@ eatventure-bot/
 ├── main.py                 # Entry point, keyboard controls
 ├── bot.py                  # Core bot logic and state handlers
 ├── state_machine.py        # State machine implementation
-├── window_capture.py       # Win32 window capture
+├── window_capture.py       # Win32 window capture & forbidden zone overlay
 ├── image_matcher.py        # OpenCV template matching
-├── mouse_controller.py     # Mouse automation
-├── config.py               # Configuration settings
+├── mouse_controller.py     # Mouse automation with zone protection
+├── telegram_notifier.py    # Telegram notification system
+├── config.py               # Configuration settings (with detailed comments)
 ├── requirements.txt        # Python dependencies
 ├── Assets/                 # Template images (PNG)
 ├── logs/                   # Log files
 └── README.md               # This file
 ```
+
+## 📊 Configuration Files Explained
+
+### config.py
+The main configuration file with extensive comments explaining each setting:
+- **Window Configuration**: WINDOW_TITLE and dimensions
+- **Telegram Settings**: TELEGRAM_ENABLED, bot token, and chat ID
+- **Detection Thresholds**: Template matching sensitivity
+- **Forbidden Zones**: Protected UI areas (5 zones by default, expandable)
+- **Debug Options**: ShowForbiddenArea for visual debugging
+- **Click Positions**: All automated click coordinates
+- **Bot Behavior**: Timing, delays, and automation parameters
 
 ## 🔧 Troubleshooting
 
@@ -164,6 +267,7 @@ eatventure-bot/
 - Ensure scrcpy is running
 - Verify `WINDOW_TITLE` in `config.py` matches your scrcpy window exactly
 - Check window title with the **X** key while bot is running
+- Try running: `scrcpy --window-title "YourDeviceName"` with a custom title
 
 ### Template Not Detected
 - Verify template images are in `Assets/` folder
@@ -172,14 +276,25 @@ eatventure-bot/
 - Ensure templates are clear PNG images with transparency if needed
 
 ### Bot Clicking Wrong Areas
+- Enable `ShowForbiddenArea = True` to visualize protected zones
 - Adjust click positions in `config.py`
-- Configure forbidden zones to protect UI elements
+- Configure additional forbidden zones to protect UI elements
 - Review logs in `logs/bot.log` for coordinate information
+- Use **X** key to find correct coordinates
+
+### Telegram Not Working
+- Verify `TELEGRAM_ENABLED = True` in config.py
+- Double-check bot token and chat ID
+- Test by visiting: `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates`
+- Make sure you sent at least one message to your bot first
+- Check logs for Telegram-related error messages
 
 ### Performance Issues
 - Close unnecessary applications
 - Ensure USB debugging is stable
-- Check CPU usage and adjust `CLICK_DELAY` if needed
+- Reduce `CLICK_DELAY` in config (current: 0.1s)
+- Check CPU usage during bot operation
+- Consider lowering image matching thresholds
 
 ## 📊 Logging
 
@@ -193,10 +308,12 @@ Set `DEBUG = True` in `config.py` for verbose logging.
 
 ## 🛡️ Safety Features
 
-- **Forbidden Zone Protection**: Prevents clicks in critical UI areas
+- **Forbidden Zone Protection**: Prevents clicks in critical UI areas with configurable zones
+- **Visual Debugging**: Optional overlay to visualize forbidden zones (`ShowForbiddenArea`)
 - **Window Activity Check**: Stops if the game window closes
 - **Keyboard Interrupt**: Clean shutdown with Ctrl+C or P key
 - **Smart Retry Logic**: Automatic recovery from detection failures
+- **Telegram Monitoring**: Real-time notifications to track bot activity remotely
 
 ## 🤝 Contributing
 

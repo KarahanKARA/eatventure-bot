@@ -1,11 +1,13 @@
 import time
 import logging
 from pathlib import Path
+from datetime import datetime
 
-from window_capture import WindowCapture
+from window_capture import WindowCapture, ForbiddenAreaOverlay
 from image_matcher import ImageMatcher
 from mouse_controller import MouseController
 from state_machine import StateMachine, State
+from telegram_notifier import TelegramNotifier
 import config
 
 logger = logging.getLogger(__name__)
@@ -44,6 +46,29 @@ class EatventureBot:
         self.upgrade_found_in_cycle = False
         self.consecutive_failed_cycles = 0
         
+        self.total_levels_completed = 0
+        self.current_level_start_time = None
+        
+        self.telegram = TelegramNotifier(config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID, config.TELEGRAM_ENABLED)
+        
+        self.overlay = None
+        if config.ShowForbiddenArea:
+            forbidden_zones = [
+                (config.FORBIDDEN_ZONE_1_X_MIN, config.FORBIDDEN_ZONE_1_X_MAX, 
+                 config.FORBIDDEN_ZONE_1_Y_MIN, config.FORBIDDEN_ZONE_1_Y_MAX),
+                (config.FORBIDDEN_ZONE_2_X_MIN, config.FORBIDDEN_ZONE_2_X_MAX,
+                 config.FORBIDDEN_ZONE_2_Y_MIN, config.FORBIDDEN_ZONE_2_Y_MAX),
+                (config.FORBIDDEN_ZONE_3_X_MIN, config.FORBIDDEN_ZONE_3_X_MAX,
+                 config.FORBIDDEN_ZONE_3_Y_MIN, config.FORBIDDEN_ZONE_3_Y_MAX),
+                (config.FORBIDDEN_ZONE_4_X_MIN, config.FORBIDDEN_ZONE_4_X_MAX,
+                 config.FORBIDDEN_ZONE_4_Y_MIN, config.FORBIDDEN_ZONE_4_Y_MAX),
+                (config.FORBIDDEN_ZONE_5_X_MIN, config.FORBIDDEN_ZONE_5_X_MAX,
+                 config.FORBIDDEN_ZONE_5_Y_MIN, config.FORBIDDEN_ZONE_5_Y_MAX),
+            ]
+            self.overlay = ForbiddenAreaOverlay(self.window_capture.hwnd, forbidden_zones)
+            self.overlay.start()
+            logger.info("Forbidden area overlay enabled and started")
+        
         logger.info("Bot initialized successfully")
     
     def load_templates(self):
@@ -80,7 +105,6 @@ class EatventureBot:
     
     def handle_find_red_icons(self, current_state):
         self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
-        time.sleep(0.05)
         
         self.cycle_counter += 1
         logger.info(f"🔄 Cycle {self.cycle_counter}/2")
@@ -106,7 +130,7 @@ class EatventureBot:
                 logger.info(f"newLevel.png found at ({x}, {y}), transitioning to new level")
                 return State.TRANSITION_LEVEL
         
-        red_icon_templates = ["RedIcon", "RedIcon2","RedIcon3","RedIcon4","RedIcon5","RedIcon6","RedIcon7", "RedIconNoBG"]
+        red_icon_templates = ["RedIcon", "RedIcon2","RedIcon3","RedIcon4","RedIcon5","RedIcon6","RedIcon7","RedIcon8","RedIcon9","RedIcon10","RedIcon11", "RedIconNoBG"]
         
         all_detections = {}
         all_detections_extended = {}
@@ -197,6 +221,14 @@ class EatventureBot:
                     config.FORBIDDEN_ZONE_3_Y_MIN <= y <= config.FORBIDDEN_ZONE_3_Y_MAX):
                     in_forbidden = True
                 
+                elif (config.FORBIDDEN_ZONE_4_X_MIN <= x <= config.FORBIDDEN_ZONE_4_X_MAX and 
+                    config.FORBIDDEN_ZONE_4_Y_MIN <= y <= config.FORBIDDEN_ZONE_4_Y_MAX):
+                    in_forbidden = True
+                
+                elif (config.FORBIDDEN_ZONE_5_X_MIN <= x <= config.FORBIDDEN_ZONE_5_X_MAX and 
+                    config.FORBIDDEN_ZONE_5_Y_MIN <= y <= config.FORBIDDEN_ZONE_5_Y_MAX):
+                    in_forbidden = True
+                
                 if in_forbidden:
                     forbidden_zone_count += 1
                 else:
@@ -235,9 +267,14 @@ class EatventureBot:
         confidence, x, y = self.red_icons[self.current_red_icon_index]
         click_x = x + config.RED_ICON_OFFSET_X
         click_y = y + config.RED_ICON_OFFSET_Y
+        
+        if self.mouse_controller.is_in_forbidden_zone(click_x, click_y):
+            logger.warning(f"Red icon click blocked - position with offset ({click_x}, {click_y}) is in forbidden zone")
+            self.current_red_icon_index += 1
+            return State.CLICK_RED_ICON if self.current_red_icon_index < len(self.red_icons) else State.OPEN_BOXES
+        
         logger.info(f"Clicking red icon {self.current_red_icon_index + 1}/{len(self.red_icons)} at ({click_x}, {click_y})")
         self.mouse_controller.click(click_x, click_y, relative=True)
-        time.sleep(0.1)
         
         self.red_icon_cycle_count = 0
         return State.CHECK_UNLOCK
@@ -254,13 +291,11 @@ class EatventureBot:
             )
             
             if found:
-                if (y > config.FORBIDDEN_CLICK_Y_MIN and 
-                    config.FORBIDDEN_CLICK_X_MIN < x < config.FORBIDDEN_CLICK_X_MAX):
+                if self.mouse_controller.is_in_forbidden_zone(x, y):
                     logger.warning(f"Unlock button in forbidden zone, skipping")
                 else:
                     logger.info(f"Unlock found, clicking")
                     self.mouse_controller.click(x, y, relative=True)
-                    time.sleep(config.STATE_DELAY)
         
         return State.SEARCH_UPGRADE_STATION
     
@@ -361,7 +396,6 @@ class EatventureBot:
     def handle_upgrade_stats(self, current_state):
         logger.info("⬆ Stats upgrade starting")
         self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
-        time.sleep(0.05)
         
         screenshot = self.window_capture.capture()
         limited_screenshot = screenshot[:config.MAX_SEARCH_Y, :]
@@ -380,7 +414,7 @@ class EatventureBot:
         extended_screenshot = screenshot[:710, :]
         
         has_upgrade_icon = False
-        red_icon_templates = ["RedIcon", "RedIcon2","RedIcon3","RedIcon4","RedIcon5","RedIcon6","RedIcon7","RedIcon8", "RedIconNoBG"]
+        red_icon_templates = ["RedIcon", "RedIcon2","RedIcon3","RedIcon4","RedIcon5","RedIcon6","RedIcon7","RedIcon8","RedIcon9","RedIcon10","RedIcon11", "RedIconNoBG"]
         
         for template_name in red_icon_templates:
             if template_name not in self.templates:
@@ -415,14 +449,11 @@ class EatventureBot:
             time.sleep(config.STATS_UPGRADE_CLICK_DELAY)
         
         self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
-        time.sleep(config.STATE_DELAY)
-        
         logger.info("========== STAT UPGRADE COMPLETED ==========")
         return State.OPEN_BOXES
     
     def handle_open_boxes(self, current_state):
         self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
-        time.sleep(0.05)
         
         screenshot = self.window_capture.capture()
         limited_screenshot = screenshot[:config.MAX_SEARCH_Y, :]
@@ -435,7 +466,7 @@ class EatventureBot:
             )
             
             if found:
-                logger.info(f"[OPEN_BOXES] newLevel.png found at ({x}, {y}), transitioning to new level")
+                logger.info(f"New level found, transitioning")
                 return State.TRANSITION_LEVEL
         
         box_names = ["box1", "box2", "box3", "box4", "box5"]
@@ -450,12 +481,10 @@ class EatventureBot:
                 )
                 
                 if found:
-                    if (y > config.FORBIDDEN_CLICK_Y_MIN and 
-                        config.FORBIDDEN_CLICK_X_MIN < x < config.FORBIDDEN_CLICK_X_MAX):
+                    if self.mouse_controller.is_in_forbidden_zone(x, y):
                         logger.debug(f"{box_name} in forbidden zone, skipping")
                     else:
                         self.mouse_controller.click(x, y, relative=True)
-                        time.sleep(0.05)
                         boxes_found += 1
         
         if boxes_found > 0:
@@ -485,7 +514,6 @@ class EatventureBot:
     
     def handle_scroll(self, current_state):
         self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
-        time.sleep(0.05)
         
         screenshot = self.window_capture.capture()
         limited_screenshot = screenshot[:config.MAX_SEARCH_Y, :]
@@ -516,9 +544,7 @@ class EatventureBot:
                 duration=0.3, relative=True
             )
         
-        time.sleep(config.STATE_DELAY)
         self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
-        time.sleep(0.05)
         
         self.scroll_count += 1
         
@@ -563,7 +589,6 @@ class EatventureBot:
     
     def handle_transition_level(self, current_state):
         self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
-        time.sleep(0.05)
         
         screenshot = self.window_capture.capture()
         limited_screenshot = screenshot[:config.MAX_SEARCH_Y, :]
@@ -579,6 +604,18 @@ class EatventureBot:
                 logger.info(f"New level button found at ({x}, {y})")
                 self.mouse_controller.click(x, y, relative=True)
                 time.sleep(1.0)
+                
+                self.total_levels_completed += 1
+                
+                time_spent = 0
+                if self.current_level_start_time:
+                    time_spent = (datetime.now() - self.current_level_start_time).total_seconds()
+                
+                self.current_level_start_time = datetime.now()
+                
+                self.telegram.notify_new_level(self.total_levels_completed, time_spent)
+                
+                logger.info(f"Level {self.total_levels_completed} completed. Time spent: {time_spent:.1f}s")
                 logger.info("Waiting for unlock button after level transition")
                 return State.WAIT_FOR_UNLOCK
         
@@ -644,4 +681,6 @@ class EatventureBot:
     
     def stop(self):
         self.running = False
+        if self.overlay:
+            self.overlay.stop()
         logger.info("Bot stopped")

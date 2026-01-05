@@ -6,6 +6,7 @@ import ctypes
 import numpy as np
 from PIL import Image
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -89,3 +90,145 @@ class WindowCapture:
     
     def is_window_active(self):
         return win32gui.IsWindow(self.hwnd) if self.hwnd else False
+
+
+class ForbiddenAreaOverlay:
+    def __init__(self, target_hwnd, forbidden_zones):
+        self.target_hwnd = target_hwnd
+        self.forbidden_zones = forbidden_zones
+        self.overlay_hwnd = None
+        self.running = False
+        self.thread = None
+        
+    def start(self):
+        if not self.running:
+            self.running = True
+            self.thread = threading.Thread(target=self._create_overlay, daemon=True)
+            self.thread.start()
+            logger.info("Forbidden area overlay started")
+    
+    def stop(self):
+        self.running = False
+        if self.overlay_hwnd:
+            try:
+                win32gui.DestroyWindow(self.overlay_hwnd)
+            except:
+                pass
+            self.overlay_hwnd = None
+        logger.info("Forbidden area overlay stopped")
+    
+    def _create_overlay(self):
+        try:
+            wc = win32gui.WNDCLASS()
+            wc.lpfnWndProc = self._wnd_proc
+            wc.lpszClassName = "ForbiddenAreaOverlay"
+            wc.hCursor = win32gui.LoadCursor(0, win32con.IDC_ARROW)
+            wc.hbrBackground = win32gui.GetStockObject(win32con.NULL_BRUSH)
+            
+            try:
+                class_atom = win32gui.RegisterClass(wc)
+            except Exception as e:
+                pass
+            
+            target_rect = win32gui.GetClientRect(self.target_hwnd)
+            target_pos = win32gui.ClientToScreen(self.target_hwnd, (0, 0))
+            width = target_rect[2] - target_rect[0]
+            height = target_rect[3] - target_rect[1]
+            
+            self.overlay_hwnd = win32gui.CreateWindowEx(
+                win32con.WS_EX_LAYERED | win32con.WS_EX_TRANSPARENT | win32con.WS_EX_TOPMOST | win32con.WS_EX_TOOLWINDOW,
+                "ForbiddenAreaOverlay",
+                "Forbidden Area Overlay",
+                win32con.WS_POPUP,
+                target_pos[0], target_pos[1],
+                width, height,
+                0, 0, 0, None
+            )
+            
+            # Set transparency (255 = opaque, 128 = 50% transparent, 0 = fully transparent)
+            win32gui.SetLayeredWindowAttributes(
+                self.overlay_hwnd,
+                0,
+                128,  # 50% transparency
+                win32con.LWA_ALPHA
+            )
+            win32gui.SetLayeredWindowAttributes(
+                self.overlay_hwnd,
+                0,
+                128,
+                win32con.LWA_ALPHA
+            )
+            
+            win32gui.ShowWindow(self.overlay_hwnd, win32con.SW_SHOW)
+            win32gui.UpdateWindow(self.overlay_hwnd)
+            
+            self._draw_zones()
+            
+            last_pos = target_pos
+            while self.running:
+                try:
+                    new_pos = win32gui.ClientToScreen(self.target_hwnd, (0, 0))
+                    if new_pos != last_pos:
+                        last_pos = new_pos
+                        win32gui.SetWindowPos(
+                            self.overlay_hwnd,
+                            win32con.HWND_TOPMOST,
+                            new_pos[0], new_pos[1],
+                            width, height,
+                            win32con.SWP_SHOWWINDOW
+                        )
+                        self._draw_zones()
+                    
+                except Exception as e:
+                    logger.error(f"Error in overlay update loop: {e}")
+                    break
+                
+                import time
+                time.sleep(0.1)
+                
+        except Exception as e:
+            logger.error(f"Failed to create overlay window: {e}")
+        finally:
+            self.running = False
+    
+    def _draw_zones(self):
+        if not self.overlay_hwnd:
+            return
+            
+        try:
+            hdc = win32gui.GetDC(self.overlay_hwnd)
+            
+            red_brush = win32gui.CreateSolidBrush(win32api.RGB(255, 0, 0))
+            
+            for x_min, x_max, y_min, y_max in self.forbidden_zones:
+                old_brush = win32gui.SelectObject(hdc, red_brush)
+                
+                win32gui.Rectangle(hdc, int(x_min), int(y_min), int(x_max), int(y_max))
+                
+                win32gui.SelectObject(hdc, old_brush)
+            
+            win32gui.DeleteObject(red_brush)
+            win32gui.ReleaseDC(self.overlay_hwnd, hdc)
+            
+        except Exception as e:
+            logger.error(f"Error drawing zones: {e}")
+    
+    def _wnd_proc(self, hwnd, msg, wparam, lparam):
+        if msg == win32con.WM_PAINT:
+            hdc, ps = win32gui.BeginPaint(hwnd)
+            
+            red_brush = win32gui.CreateSolidBrush(win32api.RGB(255, 0, 0))
+            
+            for x_min, x_max, y_min, y_max in self.forbidden_zones:
+                old_brush = win32gui.SelectObject(hdc, red_brush)
+                win32gui.Rectangle(hdc, int(x_min), int(y_min), int(x_max), int(y_max))
+                win32gui.SelectObject(hdc, old_brush)
+            
+            win32gui.DeleteObject(red_brush)
+            win32gui.EndPaint(hwnd, ps)
+            return 0
+        elif msg == win32con.WM_DESTROY:
+            win32gui.PostQuitMessage(0)
+            return 0
+        return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
+

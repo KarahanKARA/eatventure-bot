@@ -36,8 +36,12 @@ def on_press(key):
                     bot_instance.running = not bot_instance.running
                     if bot_instance.running:
                         logger.info("[Z pressed] Bot STARTED")
+                        from datetime import datetime
+                        bot_instance.current_level_start_time = datetime.now()
+                        bot_instance.telegram.notify_bot_started()
                     else:
                         logger.info("[Z pressed] Bot STOPPED")
+                        bot_instance.telegram.notify_bot_stopped()
             elif key.char == 'p':
                 logger = logging.getLogger(__name__)
                 logger.info("[P pressed] Exiting program...")
