@@ -356,6 +356,8 @@ class EatventureBot:
         max_hold_time = 10.0
         check_interval = 0.2
         elapsed_time = 0.0
+        consecutive_not_found = 0
+        required_not_found = 2
         
         while elapsed_time < max_hold_time:
             time.sleep(check_interval)
@@ -373,8 +375,15 @@ class EatventureBot:
                 )
                 
                 if not found:
-                    logger.info(f"Upgrade done ({elapsed_time:.1f}s)")
-                    break
+                    consecutive_not_found += 1
+                    if consecutive_not_found >= required_not_found:
+                        logger.info(f"Hold released: upgradeStation disappeared ({elapsed_time:.1f}s)")
+                        break
+                else:
+                    consecutive_not_found = 0
+        
+        if elapsed_time >= max_hold_time:
+            logger.info(f"Hold released: max time reached ({elapsed_time:.1f}s)")
         
         win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, screen_x, screen_y, 0, 0)
         

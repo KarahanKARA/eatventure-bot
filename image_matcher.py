@@ -47,7 +47,6 @@ class ImageMatcher:
                     logger.debug(f"[{template_name}] Color check failed at ({center_x}, {center_y}), confidence: {confidence:.2%}")
                     return False, confidence, 0, 0
             
-            logger.debug(f"[{template_name}] Found at ({center_x}, {center_y}), confidence: {confidence:.2%}")
             return True, confidence, center_x, center_y
         
         return False, confidence, 0, 0
@@ -126,7 +125,6 @@ class ImageMatcher:
                 confidence = 1 - result[pt[1], pt[0]]
                 center_x = pt[0] + w // 2
                 center_y = pt[1] + h // 2
-                logger.debug(f"[{template_name}] Found at ({center_x}, {center_y}), confidence: {confidence:.2%}")
                 all_matches.append((confidence, center_x, center_y, w, h))
         
         if all_matches:
