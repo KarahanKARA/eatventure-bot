@@ -100,7 +100,7 @@ def main():
         
         while not should_exit:
             if bot.running:
-                bot.state_machine.update()
+                bot.step()
             time.sleep(0.1)
         
         logger.info("Program exiting...")
