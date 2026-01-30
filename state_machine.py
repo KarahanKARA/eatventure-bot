@@ -23,11 +23,16 @@ class StateMachine:
         self.current_state = initial_state
         self.previous_state = None
         self.state_handlers = {}
+        self.priority_resolver = None
         logger.info(f"State machine initialized in state: {initial_state.name}")
     
     def register_handler(self, state, handler):
         self.state_handlers[state] = handler
         logger.debug(f"Registered handler for state: {state.name}")
+
+    def set_priority_resolver(self, resolver):
+        self.priority_resolver = resolver
+        logger.debug("Priority resolver registered")
     
     def transition(self, new_state):
         if new_state != self.current_state:
@@ -36,6 +41,16 @@ class StateMachine:
             self.current_state = new_state
     
     def update(self):
+        if self.priority_resolver is not None:
+            try:
+                priority_state = self.priority_resolver(self.current_state)
+            except Exception:
+                logger.exception("Priority resolver failed")
+                priority_state = None
+
+            if priority_state is not None and isinstance(priority_state, State):
+                self.transition(priority_state)
+
         if self.current_state in self.state_handlers:
             handler = self.state_handlers[self.current_state]
             next_state = handler(self.current_state)

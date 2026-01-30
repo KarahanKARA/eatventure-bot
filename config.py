@@ -1,17 +1,17 @@
 # Window Configuration
 # WINDOW_TITLE: The exact title of the scrcpy window (visible at the top of the window)
 # To find it: Look at your scrcpy window's title bar, it usually shows your device model
-WINDOW_TITLE = "YOUR_WINDOW_TITLE_HERE"
+WINDOW_TITLE = "V2352GA"
 WINDOW_WIDTH = 300 * 1.2
 WINDOW_HEIGHT = 650 * 1.2
 
 # Detection Thresholds
 MATCH_THRESHOLD = 0.98
-RED_ICON_THRESHOLD = 0.95
-RED_ICON_MIN_MATCHES = 3
-STATS_RED_ICON_THRESHOLD = 0.94
+RED_ICON_THRESHOLD = 0.94
+RED_ICON_MIN_MATCHES = 2
+STATS_RED_ICON_THRESHOLD = 0.97
 SEARCH_INTERVAL = 0.5
-CLICK_DELAY = 0.1
+CLICK_DELAY = 0.03
 
 # Directory Paths
 TEMPLATES_DIR = "templates"
@@ -21,7 +21,7 @@ SCREENSHOTS_DIR = "screenshots"
 
 # Debug and Visualization Settings
 DEBUG = True
-SAVE_SCREENSHOTS = False
+SAVE_SCREENSHOTS = True
 
 # ShowForbiddenArea: Enables a visual overlay showing forbidden zones in red
 # When True, displays red rectangles over areas where the bot won't click
@@ -30,20 +30,21 @@ ShowForbiddenArea = False
 
 # Telegram Bot Configuration
 # TELEGRAM_ENABLED: Master switch to enable/disable all Telegram notifications
-# Set to True if you want to receive any Telegram messages from the bot
-TELEGRAM_ENABLED = False
+# Set to True if you want to receive any Telegrazm messages from the bot
+TELEGRAM_ENABLED = True
 
 # TELEGRAM_BOT_TOKEN: Your Telegram bot API token from @BotFather
 # To get one: Message @BotFather on Telegram, use /newbot command
-TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN_HERE"
+TELEGRAM_BOT_TOKEN = "8336061529:AAFPrEKWOY6lBgGAnvy-dEFTigiGpvGs7R0"
 
 # TELEGRAM_CHAT_ID: Your Telegram chat ID to receive messages
 # To get it: Message your bot, then visit: https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates
 # Look for "chat":{"id": YOUR_CHAT_ID in the response
-TELEGRAM_CHAT_ID = "YOUR_TELEGRAM_CHAT_ID_HERE"
+TELEGRAM_CHAT_ID = "1074901059"
 
 # Game Element Detection
 MAX_SEARCH_Y = 660
+EXTENDED_SEARCH_Y = 710
 
 # Click Positions (relative to window)
 UPGRADE_POS = (320, 726)
@@ -59,18 +60,21 @@ SCROLL_END_POS = (170, 200)
 NEW_LEVEL_BUTTON_POS = (30, 692)
 
 # Template Matching Settings
-UPGRADE_STATION_THRESHOLD = 0.8
-UPGRADE_STATION_COLOR_CHECK = True
+UPGRADE_STATION_THRESHOLD = 0.94
+UPGRADE_STATION_COLOR_CHECK = False
 BOX_THRESHOLD = 0.97
-UNLOCK_THRESHOLD = 0.9
-NEW_LEVEL_THRESHOLD = 0.98
+UNLOCK_THRESHOLD = 0.85
+NEW_LEVEL_THRESHOLD = 0.95
 
 # Bot Behavior Configuration
 RED_ICON_CYCLE_COUNT = 3
-STATS_UPGRADE_CLICK_COUNT = 20
-STATS_UPGRADE_CLICK_DELAY = 0.01
-UPGRADE_HOLD_DURATION = 3.5
-SCROLL_UP_CYCLES = 3
+STATS_UPGRADE_CLICK_DURATION = 2.0
+STATS_UPGRADE_CLICK_DELAY = 0.010
+STATS_ICON_PADDING = 25
+CAPTURE_CACHE_TTL = 0.08
+UPGRADE_HOLD_DURATION = 5.0
+UPGRADE_CLICK_INTERVAL = 0.010
+SCROLL_UP_CYCLES = 2
 
 # Red Icon Detection Offsets
 RED_ICON_OFFSET_X = 10
@@ -89,7 +93,7 @@ UPGRADE_RED_ICON_Y_MAX = 680
 
 # State Machine Settings
 STATE_DELAY = 0.05
-MAX_SCROLL_CYCLES = 5
+MAX_SCROLL_CYCLES = 3
 
 # Forbidden Zones Configuration
 # These zones prevent the bot from clicking on critical UI elements
