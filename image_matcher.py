@@ -1,8 +1,16 @@
 import cv2
 import numpy as np
 import logging
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class TemplateData:
+    bgr: np.ndarray
+    gray: np.ndarray
+    mask: np.ndarray | None
 
 
 class ImageMatcher:
@@ -20,29 +28,58 @@ class ImageMatcher:
             mask = np.zeros_like(alpha)
             mask[alpha > 0] = 255
             template = cv2.cvtColor(template, cv2.COLOR_BGRA2BGR)
-        
-        return template, mask
+
+        template = np.ascontiguousarray(template)
+        gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        gray = np.ascontiguousarray(gray)
+
+        return TemplateData(bgr=template, gray=gray, mask=mask)
+
+    def to_gray(self, image):
+        if len(image.shape) == 2:
+            return image
+        return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    def _normalize_template(self, template):
+        if isinstance(template, TemplateData):
+            return template
+        if isinstance(template, (tuple, list)):
+            if len(template) == 3:
+                return TemplateData(bgr=template[0], gray=template[1], mask=template[2])
+            if len(template) == 2:
+                bgr, mask = template
+                gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+                return TemplateData(bgr=bgr, gray=gray, mask=mask)
+        raise ValueError("Unsupported template format")
     
-    def find_template(self, screenshot, template, mask=None, threshold=None, template_name="Unknown", check_color=False):
+    def find_template(self, screenshot, template, mask=None, threshold=None, template_name="Unknown", check_color=False, screenshot_gray=None):
         thresh = threshold if threshold else self.threshold
-        
-        if template.shape[0] > screenshot.shape[0] or template.shape[1] > screenshot.shape[1]:
-            logger.debug(f"Template is larger than screenshot. Template: {template.shape}, Screenshot: {screenshot.shape}")
+
+        template_data = self._normalize_template(template)
+        template_bgr = template_data.bgr
+        template_gray = template_data.gray
+        template_mask = mask if mask is not None else template_data.mask
+
+        if template_bgr.shape[0] > screenshot.shape[0] or template_bgr.shape[1] > screenshot.shape[1]:
+            logger.debug(f"Template is larger than screenshot. Template: {template_bgr.shape}, Screenshot: {screenshot.shape}")
             return False, 0.0, 0, 0
-        
-        result = cv2.matchTemplate(screenshot, template, cv2.TM_SQDIFF_NORMED, mask=mask)
-        
+
+        if screenshot_gray is None:
+            screenshot_gray = self.to_gray(screenshot)
+
+        result = cv2.matchTemplate(screenshot_gray, template_gray, cv2.TM_SQDIFF_NORMED, mask=template_mask)
+
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-        
+
         confidence = 1 - min_val
-        
+
         if confidence >= thresh:
-            h, w = template.shape[:2]
+            h, w = template_bgr.shape[:2]
             center_x = min_loc[0] + w // 2
             center_y = min_loc[1] + h // 2
             
             if check_color:
-                color_match = self._check_color_similarity(screenshot, template, min_loc, mask)
+                color_match = self._check_color_similarity(screenshot, template_bgr, min_loc, template_mask)
                 if not color_match:
                     logger.debug(f"[{template_name}] Color check failed at ({center_x}, {center_y}), confidence: {confidence:.2%}")
                     return False, confidence, 0, 0
@@ -91,35 +128,43 @@ class ImageMatcher:
         color_threshold = 0.7
         return avg_corr >= color_threshold
     
-    def find_all_templates(self, screenshot, template, mask=None, threshold=None, min_distance=15, scales=None, template_name="Unknown"):
+    def find_all_templates(self, screenshot, template, mask=None, threshold=None, min_distance=15, scales=None, template_name="Unknown", screenshot_gray=None):
         thresh = threshold if threshold else self.threshold
         all_matches = []
-        
+
+        template_data = self._normalize_template(template)
+        template_bgr = template_data.bgr
+        template_gray = template_data.gray
+        template_mask = mask if mask is not None else template_data.mask
+
         if scales is None:
             scales = [1.0]
-        
-        if template.shape[0] > screenshot.shape[0] or template.shape[1] > screenshot.shape[1]:
-            logger.debug(f"Template is larger than screenshot. Template: {template.shape}, Screenshot: {screenshot.shape}")
+
+        if template_bgr.shape[0] > screenshot.shape[0] or template_bgr.shape[1] > screenshot.shape[1]:
+            logger.debug(f"Template is larger than screenshot. Template: {template_bgr.shape}, Screenshot: {screenshot.shape}")
             return []
-        
+
+        if screenshot_gray is None:
+            screenshot_gray = self.to_gray(screenshot)
+
         for scale in scales:
             if scale != 1.0:
-                scaled_template = cv2.resize(template, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+                scaled_template = cv2.resize(template_gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
                 scaled_mask = None
-                if mask is not None:
-                    scaled_mask = cv2.resize(mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+                if template_mask is not None:
+                    scaled_mask = cv2.resize(template_mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
                     scaled_mask[scaled_mask > 0] = 255
             else:
-                scaled_template = template
-                scaled_mask = mask
-            
-            if scaled_template.shape[0] > screenshot.shape[0] or scaled_template.shape[1] > screenshot.shape[1]:
+                scaled_template = template_gray
+                scaled_mask = template_mask
+
+            if scaled_template.shape[0] > screenshot_gray.shape[0] or scaled_template.shape[1] > screenshot_gray.shape[1]:
                 continue
-            
-            result = cv2.matchTemplate(screenshot, scaled_template, cv2.TM_SQDIFF_NORMED, mask=scaled_mask)
-            
+
+            result = cv2.matchTemplate(screenshot_gray, scaled_template, cv2.TM_SQDIFF_NORMED, mask=scaled_mask)
+
             locations = np.where(result <= (1 - thresh))
-            
+
             h, w = scaled_template.shape[:2]
             for pt in zip(*locations[::-1]):
                 confidence = 1 - result[pt[1], pt[0]]
