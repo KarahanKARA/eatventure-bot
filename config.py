@@ -1,7 +1,7 @@
 # Window Configuration
 # WINDOW_TITLE: The exact title of the scrcpy window (visible at the top of the window)
 # To find it: Look at your scrcpy window's title bar, it usually shows your device model
-WINDOW_TITLE = "V2352GA"
+WINDOW_TITLE = "EatventureAuto"
 WINDOW_WIDTH = 300 * 1.2
 WINDOW_HEIGHT = 650 * 1.2
 
@@ -11,7 +11,7 @@ RED_ICON_THRESHOLD = 0.94
 RED_ICON_MIN_MATCHES = 2
 STATS_RED_ICON_THRESHOLD = 0.97
 SEARCH_INTERVAL = 0.5
-CLICK_DELAY = 0.03
+CLICK_DELAY = 0.1
 
 # Directory Paths
 TEMPLATES_DIR = "templates"
@@ -21,7 +21,7 @@ SCREENSHOTS_DIR = "screenshots"
 
 # Debug and Visualization Settings
 DEBUG = True
-SAVE_SCREENSHOTS = True
+SAVE_SCREENSHOTS = False
 
 # ShowForbiddenArea: Enables a visual overlay showing forbidden zones in red
 # When True, displays red rectangles over areas where the bot won't click
@@ -63,18 +63,19 @@ NEW_LEVEL_BUTTON_POS = (30, 692)
 UPGRADE_STATION_THRESHOLD = 0.94
 UPGRADE_STATION_COLOR_CHECK = False
 BOX_THRESHOLD = 0.97
-UNLOCK_THRESHOLD = 0.85
-NEW_LEVEL_THRESHOLD = 0.95
+UNLOCK_THRESHOLD = 0.9
+NEW_LEVEL_THRESHOLD = 0.98
 
 # Bot Behavior Configuration
 RED_ICON_CYCLE_COUNT = 3
-STATS_UPGRADE_CLICK_DURATION = 2.0
-STATS_UPGRADE_CLICK_DELAY = 0.010
-STATS_ICON_PADDING = 25
+STATS_UPGRADE_CLICK_DURATION = 1.5
+STATS_UPGRADE_CLICK_DELAY = 0.005
+STATS_ICON_PADDING = 20
 CAPTURE_CACHE_TTL = 0.08
 UPGRADE_HOLD_DURATION = 5.0
-UPGRADE_CLICK_INTERVAL = 0.010
+UPGRADE_CLICK_INTERVAL = 0.005
 SCROLL_UP_CYCLES = 2
+NEW_LEVEL_INTERRUPT_INTERVAL = 0.2
 
 # Red Icon Detection Offsets
 RED_ICON_OFFSET_X = 10
@@ -93,7 +94,7 @@ UPGRADE_RED_ICON_Y_MAX = 680
 
 # State Machine Settings
 STATE_DELAY = 0.05
-MAX_SCROLL_CYCLES = 3
+MAX_SCROLL_CYCLES = 2
 
 # Forbidden Zones Configuration
 # These zones prevent the bot from clicking on critical UI elements
@@ -134,3 +135,9 @@ FORBIDDEN_ZONE_5_X_MIN = 55
 FORBIDDEN_ZONE_5_X_MAX = 285
 FORBIDDEN_ZONE_5_Y_MIN = 660
 FORBIDDEN_ZONE_5_Y_MAX = 725
+
+# Zone 6: Top banner area
+FORBIDDEN_ZONE_6_X_MIN = 35
+FORBIDDEN_ZONE_6_X_MAX = 332
+FORBIDDEN_ZONE_6_Y_MIN = 18
+FORBIDDEN_ZONE_6_Y_MAX = 66
