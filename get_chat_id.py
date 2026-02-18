@@ -37,7 +37,6 @@ try:
         else:
             print("Found messages!\n")
             
-            # Get unique chat IDs
             chat_ids = set()
             for update in updates:
                 if "message" in update:

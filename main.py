@@ -101,7 +101,9 @@ def main():
         while not should_exit:
             if bot.running:
                 bot.state_machine.update()
-            time.sleep(0.1)
+                time.sleep(config.CYCLE_DELAY)
+            else:
+                time.sleep(0.5)
         
         logger.info("Program exiting...")
         

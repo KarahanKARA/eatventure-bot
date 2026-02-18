@@ -145,13 +145,6 @@ class ForbiddenAreaOverlay:
                 0, 0, 0, None
             )
             
-            # Set transparency (255 = opaque, 128 = 50% transparent, 0 = fully transparent)
-            win32gui.SetLayeredWindowAttributes(
-                self.overlay_hwnd,
-                0,
-                128,  # 50% transparency
-                win32con.LWA_ALPHA
-            )
             win32gui.SetLayeredWindowAttributes(
                 self.overlay_hwnd,
                 0,

@@ -46,6 +46,9 @@ class EatventureBot:
         self.upgrade_found_in_cycle = False
         self.consecutive_failed_cycles = 0
         
+        self.failed_click_tracker = {}
+        self.last_clicked_pos = None
+        
         self.total_levels_completed = 0
         self.current_level_start_time = None
         
@@ -103,6 +106,24 @@ class EatventureBot:
         self.state_machine.register_handler(State.TRANSITION_LEVEL, self.handle_transition_level)
         self.state_machine.register_handler(State.WAIT_FOR_UNLOCK, self.handle_wait_for_unlock)
     
+    def _is_in_any_forbidden_zone(self, x, y):
+        zones = [
+            (config.FORBIDDEN_ZONE_1_X_MIN, config.FORBIDDEN_ZONE_1_X_MAX,
+             config.FORBIDDEN_ZONE_1_Y_MIN, config.FORBIDDEN_ZONE_1_Y_MAX),
+            (config.FORBIDDEN_ZONE_2_X_MIN, config.FORBIDDEN_ZONE_2_X_MAX,
+             config.FORBIDDEN_ZONE_2_Y_MIN, config.FORBIDDEN_ZONE_2_Y_MAX),
+            (config.FORBIDDEN_ZONE_3_X_MIN, config.FORBIDDEN_ZONE_3_X_MAX,
+             config.FORBIDDEN_ZONE_3_Y_MIN, config.FORBIDDEN_ZONE_3_Y_MAX),
+            (config.FORBIDDEN_ZONE_4_X_MIN, config.FORBIDDEN_ZONE_4_X_MAX,
+             config.FORBIDDEN_ZONE_4_Y_MIN, config.FORBIDDEN_ZONE_4_Y_MAX),
+            (config.FORBIDDEN_ZONE_5_X_MIN, config.FORBIDDEN_ZONE_5_X_MAX,
+             config.FORBIDDEN_ZONE_5_Y_MIN, config.FORBIDDEN_ZONE_5_Y_MAX),
+        ]
+        for x_min, x_max, y_min, y_max in zones:
+            if x_min <= x <= x_max and y_min <= y <= y_max:
+                return True
+        return False
+    
     def handle_find_red_icons(self, current_state):
         self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
         
@@ -133,7 +154,6 @@ class EatventureBot:
         red_icon_templates = ["RedIcon", "RedIcon2","RedIcon3","RedIcon4","RedIcon5","RedIcon6","RedIcon7","RedIcon8","RedIcon9","RedIcon10","RedIcon11", "RedIconNoBG"]
         
         all_detections = {}
-        all_detections_extended = {}
         
         for template_name in red_icon_templates:
             if template_name not in self.templates:
@@ -157,24 +177,6 @@ class EatventureBot:
                 
                 if not found_nearby:
                     all_detections[(x, y)] = [(template_name, conf)]
-            
-            extended_screenshot = screenshot[:710, :]
-            icons_extended = self.image_matcher.find_all_templates(
-                extended_screenshot, template, mask=mask,
-                threshold=config.RED_ICON_THRESHOLD,
-                min_distance=80, template_name=template_name
-            )
-            
-            for conf, x, y in icons_extended:
-                found_nearby = False
-                for (px, py) in list(all_detections_extended.keys()):
-                    if abs(x - px) < 10 and abs(y - py) < 10:
-                        all_detections_extended[(px, py)].append((template_name, conf))
-                        found_nearby = True
-                        break
-                
-                if not found_nearby:
-                    all_detections_extended[(x, y)] = [(template_name, conf)]
         
         min_matches = config.RED_ICON_MIN_MATCHES
         total_detections = len(all_detections)
@@ -188,48 +190,32 @@ class EatventureBot:
             else:
                 rejected_count += 1
         
-        all_red_icons_extended = []
-        for (x, y), matches in all_detections_extended.items():
-            if len(matches) >= min_matches:
-                max_conf = max(conf for _, conf in matches)
-                all_red_icons_extended.append((max_conf, x, y))
+        logger.info(f"Red Icon Detection: {total_detections} total, {len(self.red_icons)} valid, {rejected_count} rejected")
         
-        logger.info(f"Red Icon Detection: {total_detections} total → {len(self.red_icons)} valid (min {min_matches} template matches), {rejected_count} rejected")
-        
-        for conf, x, y in all_red_icons_extended:
-            if (config.NEW_LEVEL_RED_ICON_X_MIN <= x <= config.NEW_LEVEL_RED_ICON_X_MAX and 
-                config.NEW_LEVEL_RED_ICON_Y_MIN <= y <= config.NEW_LEVEL_RED_ICON_Y_MAX):
-                logger.info(f"New level detected! Red icon at ({x}, {y})")
-                return State.CHECK_NEW_LEVEL
+        if screenshot.shape[0] > 640:
+            new_level_roi = screenshot[640:min(710, screenshot.shape[0]), :]
+            for tname in red_icon_templates[:4]:
+                if tname not in self.templates:
+                    continue
+                t, m = self.templates[tname]
+                if t.shape[0] > new_level_roi.shape[0] or t.shape[1] > new_level_roi.shape[1]:
+                    continue
+                nf, nc, nx, ny = self.image_matcher.find_template(
+                    new_level_roi, t, mask=m, threshold=config.RED_ICON_THRESHOLD
+                )
+                if nf:
+                    abs_x, abs_y = nx, 640 + ny
+                    if (config.NEW_LEVEL_RED_ICON_X_MIN <= abs_x <= config.NEW_LEVEL_RED_ICON_X_MAX and
+                        config.NEW_LEVEL_RED_ICON_Y_MIN <= abs_y <= config.NEW_LEVEL_RED_ICON_Y_MAX):
+                        logger.info(f"New level detected! Red icon at ({abs_x}, {abs_y})")
+                        return State.CHECK_NEW_LEVEL
         
         if self.red_icons:
             filtered_icons = []
             forbidden_zone_count = 0
             
             for conf, x, y in self.red_icons:
-                in_forbidden = False
-                
-                if (config.FORBIDDEN_ZONE_1_X_MIN <= x <= config.FORBIDDEN_ZONE_1_X_MAX and 
-                    config.FORBIDDEN_ZONE_1_Y_MIN <= y <= config.FORBIDDEN_ZONE_1_Y_MAX):
-                    in_forbidden = True
-                    
-                elif (config.FORBIDDEN_ZONE_2_X_MIN <= x <= config.FORBIDDEN_ZONE_2_X_MAX and 
-                    config.FORBIDDEN_ZONE_2_Y_MIN <= y <= config.FORBIDDEN_ZONE_2_Y_MAX):
-                    in_forbidden = True
-                    
-                elif (config.FORBIDDEN_ZONE_3_X_MIN <= x <= config.FORBIDDEN_ZONE_3_X_MAX and 
-                    config.FORBIDDEN_ZONE_3_Y_MIN <= y <= config.FORBIDDEN_ZONE_3_Y_MAX):
-                    in_forbidden = True
-                
-                elif (config.FORBIDDEN_ZONE_4_X_MIN <= x <= config.FORBIDDEN_ZONE_4_X_MAX and 
-                    config.FORBIDDEN_ZONE_4_Y_MIN <= y <= config.FORBIDDEN_ZONE_4_Y_MAX):
-                    in_forbidden = True
-                
-                elif (config.FORBIDDEN_ZONE_5_X_MIN <= x <= config.FORBIDDEN_ZONE_5_X_MAX and 
-                    config.FORBIDDEN_ZONE_5_Y_MIN <= y <= config.FORBIDDEN_ZONE_5_Y_MAX):
-                    in_forbidden = True
-                
-                if in_forbidden:
+                if self._is_in_any_forbidden_zone(x, y):
                     forbidden_zone_count += 1
                 else:
                     filtered_icons.append((conf, x, y))
@@ -241,6 +227,20 @@ class EatventureBot:
                 logger.info("No valid red icons after filtering")
                 return State.OPEN_BOXES
             
+            stable_icons = []
+            for conf, x, y in filtered_icons:
+                pos_key = (x // 30, y // 30)
+                if self.failed_click_tracker.get(pos_key, 0) < 3:
+                    stable_icons.append((conf, x, y))
+            
+            if not stable_icons and filtered_icons:
+                logger.info("All red icons are stuck positions, forcing scroll")
+                self.failed_click_tracker.clear()
+                return State.SCROLL
+            
+            if not stable_icons:
+                return State.OPEN_BOXES
+            
             def get_priority(icon):
                 conf, x, y = icon
                 for success_y in self.successful_red_icon_positions:
@@ -248,10 +248,10 @@ class EatventureBot:
                         return (0, y)
                 return (1, y)
             
-            filtered_icons.sort(key=get_priority)
-            self.red_icons = filtered_icons
+            stable_icons.sort(key=get_priority)
+            self.red_icons = stable_icons
             
-            logger.info(f"✓ {len(self.red_icons)} red icons ready to process")
+            logger.info(f"{len(self.red_icons)} red icons ready to process")
             self.current_red_icon_index = 0
             self.red_icon_cycle_count = 0
             self.work_done = True
@@ -265,6 +265,7 @@ class EatventureBot:
             return State.OPEN_BOXES
         
         confidence, x, y = self.red_icons[self.current_red_icon_index]
+        self.last_clicked_pos = (x, y)
         click_x = x + config.RED_ICON_OFFSET_X
         click_y = y + config.RED_ICON_OFFSET_Y
         
@@ -318,7 +319,16 @@ class EatventureBot:
                 )
                 
                 if found:
-                    logger.info(f"✓ Upgrade station found (attempt {attempt + 1})")
+                    if self.mouse_controller.is_in_forbidden_zone(x, y):
+                        logger.info(f"Upgrade station in forbidden zone ({x}, {y}), skipping")
+                        if self.last_clicked_pos:
+                            pk = (self.last_clicked_pos[0] // 30, self.last_clicked_pos[1] // 30)
+                            self.failed_click_tracker[pk] = self.failed_click_tracker.get(pk, 0) + 1
+                        self.red_icon_processed_count += 1
+                        self.consecutive_failed_cycles += 1
+                        return State.OPEN_BOXES
+                    
+                    logger.info(f"Upgrade station found (attempt {attempt + 1})")
                     self.upgrade_station_pos = (x, y)
                     
                     if self.current_red_icon_index < len(self.red_icons):
@@ -333,7 +343,10 @@ class EatventureBot:
             if attempt < max_attempts - 1:
                 time.sleep(0.15)
         
-        logger.info(f"✗ Upgrade station not found (failed cycles: {self.consecutive_failed_cycles + 1})")
+        logger.info(f"Upgrade station not found (failed cycles: {self.consecutive_failed_cycles + 1})")
+        if self.last_clicked_pos:
+            pk = (self.last_clicked_pos[0] // 30, self.last_clicked_pos[1] // 30)
+            self.failed_click_tracker[pk] = self.failed_click_tracker.get(pk, 0) + 1
         self.red_icon_processed_count += 1
         self.consecutive_failed_cycles += 1
         return State.OPEN_BOXES
@@ -390,6 +403,10 @@ class EatventureBot:
         self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
         time.sleep(0.05)
         
+        if self.last_clicked_pos:
+            pk = (self.last_clicked_pos[0] // 30, self.last_clicked_pos[1] // 30)
+            self.failed_click_tracker.pop(pk, None)
+        
         self.red_icon_processed_count += 1
         
         self.upgrade_station_counter += 1
@@ -420,30 +437,34 @@ class EatventureBot:
                 logger.info(f"New level detected during stats upgrade")
                 return State.TRANSITION_LEVEL
         
-        extended_screenshot = screenshot[:710, :]
-        
         has_upgrade_icon = False
-        red_icon_templates = ["RedIcon", "RedIcon2","RedIcon3","RedIcon4","RedIcon5","RedIcon6","RedIcon7","RedIcon8","RedIcon9","RedIcon10","RedIcon11", "RedIconNoBG"]
+        red_icon_templates = ["RedIcon", "RedIcon2", "RedIcon3", "RedIcon4", "RedIcon5",
+                              "RedIcon6", "RedIcon7", "RedIcon8", "RedIcon9", "RedIcon10",
+                              "RedIcon11", "RedIconNoBG"]
+        
+        roi_y_start = max(0, config.UPGRADE_RED_ICON_Y_MIN - 30)
+        roi_y_end = min(screenshot.shape[0], config.UPGRADE_RED_ICON_Y_MAX + 30)
+        roi_x_start = max(0, config.UPGRADE_RED_ICON_X_MIN - 30)
+        roi_x_end = min(screenshot.shape[1], config.UPGRADE_RED_ICON_X_MAX + 30)
+        upgrade_roi = screenshot[roi_y_start:roi_y_end, roi_x_start:roi_x_end]
         
         for template_name in red_icon_templates:
             if template_name not in self.templates:
                 continue
-            
             template, mask = self.templates[template_name]
-            icons = self.image_matcher.find_all_templates(
-                extended_screenshot, template, mask=mask,
-                threshold=config.STATS_RED_ICON_THRESHOLD,
-                min_distance=80, template_name=template_name
+            if template.shape[0] > upgrade_roi.shape[0] or template.shape[1] > upgrade_roi.shape[1]:
+                continue
+            found, conf, rx, ry = self.image_matcher.find_template(
+                upgrade_roi, template, mask=mask,
+                threshold=config.STATS_RED_ICON_THRESHOLD
             )
-            
-            for conf, x, y in icons:
-                if (config.UPGRADE_RED_ICON_X_MIN <= x <= config.UPGRADE_RED_ICON_X_MAX and 
-                    config.UPGRADE_RED_ICON_Y_MIN <= y <= config.UPGRADE_RED_ICON_Y_MAX):
+            if found:
+                abs_x = roi_x_start + rx
+                abs_y = roi_y_start + ry
+                if (config.UPGRADE_RED_ICON_X_MIN <= abs_x <= config.UPGRADE_RED_ICON_X_MAX and
+                    config.UPGRADE_RED_ICON_Y_MIN <= abs_y <= config.UPGRADE_RED_ICON_Y_MAX):
                     has_upgrade_icon = True
                     break
-            
-            if has_upgrade_icon:
-                break
         
         if not has_upgrade_icon:
             logger.info("✗ No stats icon, skipping")
@@ -522,6 +543,7 @@ class EatventureBot:
             return State.FIND_RED_ICONS
     
     def handle_scroll(self, current_state):
+        self.failed_click_tracker.clear()
         self.mouse_controller.click(config.IDLE_CLICK_POS[0], config.IDLE_CLICK_POS[1], relative=True)
         
         screenshot = self.window_capture.capture()
