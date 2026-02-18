@@ -1,7 +1,7 @@
 # Window Configuration
 # WINDOW_TITLE: The exact title of the scrcpy window (visible at the top of the window)
 # To find it: Look at your scrcpy window's title bar, it usually shows your device model
-WINDOW_TITLE = "YOUR_WINDOW_TITLE_HERE"
+WINDOW_TITLE = "SM-M315F"
 WINDOW_WIDTH = 300 * 1.2
 WINDOW_HEIGHT = 650 * 1.2
 
@@ -12,6 +12,7 @@ RED_ICON_MIN_MATCHES = 3
 STATS_RED_ICON_THRESHOLD = 0.94
 SEARCH_INTERVAL = 0.5
 CLICK_DELAY = 0.1
+CYCLE_DELAY = 0.15
 
 # Directory Paths
 TEMPLATES_DIR = "templates"
